@@ -1,83 +1,90 @@
 import streamlit as st
-from youtubesearchpython import VideosSearch
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
 import openai
+import re
 
-# Streamlit UI
-st.set_page_config(page_title="Interview Insights Generator", layout="centered")
-st.title("🎤 Interview Tips to Social Posts")
-st.write("Turn a YouTube video into a professional social media post in seconds.")
+st.set_page_config(page_title="🎤 Interview Video to Story", layout="centered")
+st.title("🎬 YouTube Video ➜ Social Media Story")
+st.write("Paste a YouTube video link, and we’ll turn it into a summary and social media content.")
 
-# API Key input
-openai_api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
+# --- API KEY Input ---
+openai_api_key = st.text_input("🔑 Enter your OpenAI API Key", type="password")
 
-# Button
-if st.button("✨ Generate from Top YouTube Interview Video") and openai_api_key:
-    openai.api_key = openai_api_key
+# --- YouTube Video Input ---
+youtube_url = st.text_input("📎 Paste a YouTube video URL")
 
-    # Step 1: Search YouTube
-    with st.spinner("Searching for top video..."):
-        search = VideosSearch("interview tips", limit=1)
-        video = search.result()["result"][0]
-        video_id = video["id"]
-        video_title = video["title"]
-        video_link = video["link"]
+# --- Extract YouTube Video ID ---
+def extract_video_id(url):
+    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
+    return match.group(1) if match else None
 
-    st.success("Found video!")
-    st.markdown(f"**🎥 {video_title}**  \n📎 [Watch on YouTube]({video_link})")
+# --- Get Transcript ---
+def get_transcript(video_id):
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join([t["text"] for t in transcript])
+    except NoTranscriptFound:
+        return None
 
-    # Step 2: Get transcript
-    with st.spinner("Extracting transcript..."):
-        try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
-            transcript_text = " ".join([entry["text"] for entry in transcript])
-        except Exception as e:
-            st.error(f"Failed to get transcript: {e}")
-            st.stop()
+# --- Generate Summary and Insights ---
+def summarize_transcript(transcript, api_key):
+    openai.api_key = api_key
+    prompt = f"""
+    You're a professional career advisor. Summarize this interview-related video transcript and extract 3–5 practical insights:
 
-    # Step 3: Summarize
-    with st.spinner("Summarizing and extracting insights..."):
-        summary_prompt = f"""
-        You are a career expert. Summarize the following interview advice transcript, and extract 3–5 key actionable insights.
+    Transcript:
+    {transcript}
 
-        Transcript:
-        {transcript_text}
+    Format:
+    - Summary:
+    - Key Insights:
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=600
+    )
+    return response.choices[0].message.content.strip()
 
-        Format:
-        - Summary:
-        - Key Insights:
-        """
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": summary_prompt}],
-            temperature=0.7
-        )
-        summary_output = response.choices[0].message.content.strip()
+# --- Generate Social Media Posts ---
+def create_social_posts(summary_text, api_key):
+    openai.api_key = api_key
+    prompt = f"""
+    Create 3 social media posts based on the following interview advice summary and insights:
 
-    st.markdown("### 🧠 Summary & Key Insights")
-    st.text(summary_output)
+    1. LinkedIn post — professional tone.
+    2. Facebook post — friendly and conversational.
+    3. Threads post — short and snappy.
 
-    # Step 4: Generate social posts
-    with st.spinner("Writing social media posts..."):
-        post_prompt = f"""
-        Based on the following summary and insights about interview tips, create 3 engaging social media posts:
+    Content:
+    {summary_text}
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.8,
+        max_tokens=600
+    )
+    return response.choices[0].message.content.strip()
 
-        1. A professional and thoughtful LinkedIn post
-        2. A friendly and shareable Facebook post
-        3. A short, punchy Threads post
+# --- Main Logic ---
+if youtube_url and openai_api_key:
+    video_id = extract_video_id(youtube_url)
+    if not video_id:
+        st.error("❌ Invalid YouTube URL. Please check and try again.")
+    else:
+        with st.spinner("📜 Extracting transcript..."):
+            transcript = get_transcript(video_id)
+            if not transcript:
+                st.error("😕 No transcript available for this video.")
+            else:
+                with st.spinner("🧠 Summarizing and extracting insights..."):
+                    summary_text = summarize_transcript(transcript, openai_api_key)
+                    st.markdown("### 🧠 Summary & Key Insights")
+                    st.text(summary_text)
 
-        Content:
-        {summary_output}
-        """
-        post_response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": post_prompt}],
-            temperature=0.8
-        )
-        posts = post_response.choices[0].message.content.strip()
-
-    st.markdown("### ✍️ Social Media Posts")
-    st.text(posts)
-
-elif not openai_api_key:
-    st.warning("Please enter your OpenAI API key.")
+                with st.spinner("✍️ Generating social media posts..."):
+                    posts = create_social_posts(summary_text, openai_api_key)
+                    st.markdown("### 📱 Social Media Posts")
+                    st.text(posts)
